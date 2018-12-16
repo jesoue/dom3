@@ -339,7 +339,10 @@ typedef struct TaskControlBlock_t
     #if( configUSE_POSIX_ERRNO == 1 )
         int iTaskErrno;
     #endif
-
+	// EDF
+	TickType_t uxArrival; 
+	TickType_t uxCount; 
+	TickType_t uxDeadline;		
 } tskTCB;
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
@@ -554,7 +557,11 @@ static void prvInitialiseNewTask(   TaskFunction_t pxTaskCode,
                                     UBaseType_t uxPriority,
                                     TaskHandle_t * const pxCreatedTask,
                                     TCB_t *pxNewTCB,
-                                    const MemoryRegion_t * const xRegions ) PRIVILEGED_FUNCTION;
+                                    const MemoryRegion_t * const xRegions ,
+									// EDF
+									TickType_t uxArrival,
+									TickType_t uxCount,
+									TickType_t uxDeadline) PRIVILEGED_FUNCTION;
 
 /*
  * Called after a new task has been created and initialised to place the task
@@ -583,7 +590,11 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB ) PRIVILEGED_FUNCTION;
                                     void * const pvParameters,
                                     UBaseType_t uxPriority,
                                     StackType_t * const puxStackBuffer,
-                                    StaticTask_t * const pxTaskBuffer )
+                                    StaticTask_t * const pxTaskBuffer ,
+									// EDF
+									TickType_t uxArrival, 
+									TickType_t uxCount,	
+									TickType_t uxDeadline)
     {
     TCB_t *pxNewTCB;
     TaskHandle_t xReturn;
@@ -618,7 +629,7 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB ) PRIVILEGED_FUNCTION;
             }
             #endif /* configSUPPORT_DYNAMIC_ALLOCATION */
 
-            prvInitialiseNewTask( pxTaskCode, pcName, ulStackDepth, pvParameters, uxPriority, &xReturn, pxNewTCB, NULL );
+            prvInitialiseNewTask( pxTaskCode, pcName, ulStackDepth, pvParameters, uxPriority, &xReturn, pxNewTCB, NULL , uxArrival, uxCount, uxDeadline); //EDF
             prvAddNewTaskToReadyList( pxNewTCB );
         }
         else
@@ -827,7 +838,11 @@ static void prvInitialiseNewTask(   TaskFunction_t pxTaskCode,
                                     UBaseType_t uxPriority,
                                     TaskHandle_t * const pxCreatedTask,
                                     TCB_t *pxNewTCB,
-                                    const MemoryRegion_t * const xRegions )
+                                    const MemoryRegion_t * const xRegions,
+									// EDF
+									TickType_t uxArrival,
+									TickType_t uxCount,
+									TickType_t uxDeadline )
 {
 StackType_t *pxTopOfStack;
 UBaseType_t x;
@@ -923,6 +938,11 @@ UBaseType_t x;
     }
 
     pxNewTCB->uxPriority = uxPriority;
+	
+	// EDF
+	pxNewTCB->uxArrival = uxArrival;
+	pxNewTCB->uxCount =uxCount;
+	pxNewTCB->uxDeadline = uxDeadline; 
     #if ( configUSE_MUTEXES == 1 )
     {
         pxNewTCB->uxBasePriority = uxPriority;
@@ -1935,13 +1955,17 @@ BaseType_t xReturn;
         /* The Idle task is created using user provided RAM - obtain the
         address of the RAM then create the idle task. */
         vApplicationGetIdleTaskMemory( &pxIdleTaskTCBBuffer, &pxIdleTaskStackBuffer, &ulIdleTaskStackSize );
-        xIdleTaskHandle = xTaskCreateStatic(    prvIdleTask,
+        //EDF
+		xIdleTaskHandle = xTaskCreateStatic(    prvIdleTask,
                                                 configIDLE_TASK_NAME,
                                                 ulIdleTaskStackSize,
                                                 ( void * ) NULL, /*lint !e961.  The cast is not redundant for all compilers. */
                                                 portPRIVILEGE_BIT, /* In effect ( tskIDLE_PRIORITY | portPRIVILEGE_BIT ), but tskIDLE_PRIORITY is zero. */
                                                 pxIdleTaskStackBuffer,
-                                                pxIdleTaskTCBBuffer ); /*lint !e961 MISRA exception, justified as it is not a redundant explicit cast to all supported compilers. */
+                                                pxIdleTaskTCBBuffer,
+												0,	// EDF
+												0,	// EDF
+												portMAX_DELAY); /*lint !e961 MISRA exception, justified as it is not a redundant explicit cast to all supported compilers. */
 
         if( xIdleTaskHandle != NULL )
         {
@@ -2938,8 +2962,25 @@ void vTaskSwitchContext( void )
 
         /* Select a new task to run using either the generic C or port
         optimised asm code. */
-        taskSELECT_HIGHEST_PRIORITY_TASK(); /*lint !e9079 void * is used as this macro is used with timers and co-routines too.  Alignment is known to be fine as the type of the pointer stored and retrieved is the same. */
-        traceTASK_SWITCHED_IN();
+       // taskSELECT_HIGHEST_PRIORITY_TASK(); /*lint !e9079 void * is used as this macro is used with timers and co-routines too.  Alignment is known to be fine as the type of the pointer stored and retrieved is the same. */
+        //EDF
+		int i, j;
+		int list_length;
+		TCB_t* iterator;
+		TickType_t minDeadline = portMAX_DELAY;
+		
+		for(i = 0; i < configMAX_PRIORITIES; i++){
+			list_length = listCURRENT_LIST_LENGTH(&(pxReadyTasksLists[i]));
+			for(j = 0; j < list_length; j++){
+				listGET_OWNER_OF_NEXT_ENTRY(iterator, &(pxReadyTasksLists[i]));
+				if(iterator->uxDeadline <= minDeadline){
+					minDeadline = iterator->uxDeadline;
+					pxCurrentTCB = iterator;
+				}
+			}
+		}
+		
+		traceTASK_SWITCHED_IN();
 
         /* After the new task is switched in, update the global errno. */
         #if( configUSE_POSIX_ERRNO == 1 )
