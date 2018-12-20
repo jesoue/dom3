@@ -1963,8 +1963,8 @@ BaseType_t xReturn;
                                                 portPRIVILEGE_BIT, /* In effect ( tskIDLE_PRIORITY | portPRIVILEGE_BIT ), but tskIDLE_PRIORITY is zero. */
                                                 pxIdleTaskStackBuffer,
                                                 pxIdleTaskTCBBuffer,
-												0,	// EDF
-												0,	// EDF
+												portMAX_DELAY,	// EDF
+												portMAX_DELAY,	// EDF
 												portMAX_DELAY); /*lint !e961 MISRA exception, justified as it is not a redundant explicit cast to all supported compilers. */
 
         if( xIdleTaskHandle != NULL )
@@ -2810,7 +2810,6 @@ BaseType_t xSwitchRequired = pdFALSE;
         }
     }
     #endif /* configUSE_PREEMPTION */
-
     return xSwitchRequired;
 }
 /*-----------------------------------------------------------*/
@@ -2907,6 +2906,9 @@ BaseType_t xSwitchRequired = pdFALSE;
 #endif /* configUSE_APPLICATION_TASK_TAG */
 /*-----------------------------------------------------------*/
 
+
+TickType_t lastTick = 0;
+
 void vTaskSwitchContext( void )
 {
     if( uxSchedulerSuspended != ( UBaseType_t ) pdFALSE )
@@ -2959,6 +2961,8 @@ void vTaskSwitchContext( void )
             pxCurrentTCB->iTaskErrno = FreeRTOS_errno;
         }
         #endif
+		
+		
 
         /* Select a new task to run using either the generic C or port
         optimised asm code. */
@@ -2966,21 +2970,53 @@ void vTaskSwitchContext( void )
         //EDF
 		int i, j;
 		int list_length;
+		volatile int currTick = xTaskGetTickCount();
 		TCB_t* iterator;
 		TickType_t minDeadline = portMAX_DELAY;
+		volatile int readyTaskExists = 0;
 		
+		// if (currTick >= 500) while(1);
 		for(i = 0; i < configMAX_PRIORITIES; i++){
 			list_length = listCURRENT_LIST_LENGTH(&(pxReadyTasksLists[i]));
 			for(j = 0; j < list_length; j++){
 				listGET_OWNER_OF_NEXT_ENTRY(iterator, &(pxReadyTasksLists[i]));
-				if(iterator->uxDeadline <= minDeadline){
+				if(iterator->uxArrival < currTick && iterator->uxCount > 0 && iterator->uxDeadline <= minDeadline){
+					readyTaskExists = 1;
 					minDeadline = iterator->uxDeadline;
 					pxCurrentTCB = iterator;
 				}
 			}
 		}
 		
+		// U xTaskIncrementTick() NEKA TI UVEK VRACA TRUE!!!, 
+		// DA BI NAM SE POZIVAO vTaskSwitchContext() UVEEEEEK!!! :)))
+		
+		if (pxCurrentTCB->uxArrival < currTick && pxCurrentTCB->uxCount > 0) {
+			if (currTick != lastTick)
+				pxCurrentTCB->uxCount -= 1;
+			if (pxCurrentTCB->uxCount == 0) {
+				TCB_t* toDelete = pxCurrentTCB;
+				pxCurrentTCB = (TCB_t*)xIdleTaskHandle;
+				vTaskDelete((TaskHandle_t)toDelete);
+			}
+		}
+		else {
+			if (!readyTaskExists) 
+				pxCurrentTCB = (TCB_t*)xIdleTaskHandle;
+		}
+		
+		// int i;
+		// for (i=0; i<myTasks.length; i++) {
+			// if (currTick == myTasks[i].deadline) { // dostigli smo periodu, kreirati task ponovo
+				// xTaskCreateStatic(myTask[i].name, ...);
+			// }	
+		// }
+		
+		
+		// k1
 		traceTASK_SWITCHED_IN();
+		
+		lastTick = currTick;
 
         /* After the new task is switched in, update the global errno. */
         #if( configUSE_POSIX_ERRNO == 1 )
@@ -2999,6 +3035,7 @@ void vTaskSwitchContext( void )
     }
 }
 /*-----------------------------------------------------------*/
+
 
 void vTaskPlaceOnEventList( List_t * const pxEventList, const TickType_t xTicksToWait )
 {

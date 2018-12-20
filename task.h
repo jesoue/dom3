@@ -452,8 +452,8 @@ is used in assert() statements. */
                                     UBaseType_t uxPriority,
                                     StackType_t * const puxStackBuffer,
                                     StaticTask_t * const pxTaskBuffer,
-									TickType_t uxArrival, // EDF
-									TickType_t uxCount,	// EDF
+									TickType_t uxArrival,
+									TickType_t uxCount,
 									TickType_t uxDeadline) PRIVILEGED_FUNCTION; //EDF
 #endif /* configSUPPORT_STATIC_ALLOCATION */
 
